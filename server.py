@@ -13,10 +13,15 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 DB_PATH = DATA_DIR / "db.json"
 PORT = int(os.environ.get("PORT", "4173"))
+ADMIN_KEY = os.environ.get("ADMIN_KEY", "qingyu-admin-2026")
 
 
 def now_ms():
     return int(time.time() * 1000)
+
+
+def make_id():
+    return now_ms() + secrets.randbelow(1000)
 
 
 def seed_data():
@@ -37,8 +42,8 @@ def seed_data():
                 "comments": 2,
                 "createdAt": current - 12 * 60 * 1000,
                 "replies": [
-                    {"id": 11, "author": "岛民", "body": "INTJ 路过，确实会被很有生命力的人吸引。", "createdAt": current - 8 * 60 * 1000},
-                    {"id": 12, "author": "青柠", "body": "别太迷信类型，但它很适合用来打开话题。", "createdAt": current - 6 * 60 * 1000},
+                    {"id": 11, "author": "岛民", "authorId": "seed-r1", "body": "INTJ 路过，确实会被很有生命力的人吸引。", "createdAt": current - 8 * 60 * 1000},
+                    {"id": 12, "author": "青柠", "authorId": "seed-r2", "body": "别太迷信类型，但它很适合用来打开话题。", "createdAt": current - 6 * 60 * 1000},
                 ],
             },
             {
@@ -53,14 +58,15 @@ def seed_data():
                 "comments": 2,
                 "createdAt": current - 34 * 60 * 1000,
                 "replies": [
-                    {"id": 21, "author": "橘子", "body": "正常，先保证睡眠和边界感。", "createdAt": current - 20 * 60 * 1000},
-                    {"id": 22, "author": "海盐", "body": "不要把恢复也变成任务，慢慢来。", "createdAt": current - 15 * 60 * 1000},
+                    {"id": 21, "author": "橘子", "authorId": "seed-r3", "body": "正常，先保证睡眠和边界感。", "createdAt": current - 20 * 60 * 1000},
+                    {"id": 22, "author": "海盐", "authorId": "seed-r4", "body": "不要把恢复也变成任务，慢慢来。", "createdAt": current - 15 * 60 * 1000},
                 ],
             },
         ],
         "reports": [
             {"id": 101, "postId": 1, "title": "示例举报：疑似人身攻击回复", "reason": "用户举报：含攻击性表达", "status": "待处理", "createdAt": current - 60 * 60 * 1000}
         ],
+        "verificationRequests": [],
     }
 
 
@@ -73,13 +79,42 @@ def ensure_db():
 def read_db():
     ensure_db()
     with DB_PATH.open("r", encoding="utf-8") as file:
-        return json.load(file)
+        db = json.load(file)
+    return migrate_db(db)
 
 
 def write_db(db):
     DATA_DIR.mkdir(exist_ok=True)
     with DB_PATH.open("w", encoding="utf-8") as file:
         json.dump(db, file, ensure_ascii=False, indent=2)
+
+
+def migrate_db(db):
+    db.setdefault("users", [])
+    db.setdefault("sessions", {})
+    db.setdefault("posts", [])
+    db.setdefault("reports", [])
+    db.setdefault("verificationRequests", [])
+    for user in db["users"]:
+        user.setdefault("bio", "")
+        user.setdefault("mbti", "")
+        user.setdefault("education", "")
+        user.setdefault("city", "")
+        user.setdefault("industry", "")
+        user.setdefault("publicTags", True)
+        user.setdefault("isAdmin", False)
+        user.setdefault("verificationStatus", "unverified")
+        user.setdefault("verificationProof", "")
+        user.setdefault("createdAt", now_ms())
+    for post in db["posts"]:
+        post.setdefault("authorId", "")
+        post.setdefault("likes", 0)
+        post.setdefault("replies", [])
+        post["comments"] = len(post["replies"])
+        for reply in post["replies"]:
+            reply.setdefault("authorId", "")
+            reply.setdefault("createdAt", post.get("createdAt", now_ms()))
+    return db
 
 
 def clean_text(value, limit):
@@ -111,7 +146,18 @@ def public_user(user):
         "city": user.get("city", ""),
         "industry": user.get("industry", ""),
         "publicTags": bool(user.get("publicTags")),
+        "isAdmin": bool(user.get("isAdmin")),
+        "verificationStatus": user.get("verificationStatus", "unverified"),
     }
+
+
+def public_profile(db, user):
+    result = public_user(user)
+    if not result:
+        return None
+    posts = [public_post(post) for post in db["posts"] if post.get("authorId") == user["id"]]
+    result["posts"] = sorted(posts, key=lambda post: post.get("createdAt", 0), reverse=True)
+    return result
 
 
 def public_post(post):
@@ -138,6 +184,10 @@ def local_addresses():
     except socket.gaierror:
         pass
     return addresses
+
+
+def can_manage_content(user, author_id):
+    return bool(user and (user.get("isAdmin") or user.get("id") == author_id))
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -184,16 +234,47 @@ class Handler(SimpleHTTPRequestHandler):
     def do_PATCH(self):
         return self.handle_api()
 
+    def do_DELETE(self):
+        return self.handle_api()
+
     def handle_api(self):
         db = read_db()
         path = urlparse(self.path).path
+        parts = path.strip("/").split("/")
         user = self.current_user(db)
 
         try:
             if self.command == "GET" and path == "/api/state":
                 posts = sorted(db["posts"], key=lambda post: post.get("createdAt", 0), reverse=True)
-                reports = sorted(db["reports"], key=lambda report: report.get("createdAt", 0), reverse=True)
-                return self.send_json(200, {"user": public_user(user), "posts": [public_post(post) for post in posts], "reports": reports})
+                reports = sorted(db["reports"], key=lambda report: report.get("createdAt", 0), reverse=True) if user and user.get("isAdmin") else []
+                verifications = sorted(db["verificationRequests"], key=lambda item: item.get("createdAt", 0), reverse=True) if user and user.get("isAdmin") else []
+                write_db(db)
+                return self.send_json(200, {
+                    "user": public_user(user),
+                    "posts": [public_post(post) for post in posts],
+                    "reports": reports,
+                    "verificationRequests": verifications,
+                })
+
+            if self.command == "GET" and len(parts) == 3 and parts[:2] == ["api", "users"]:
+                target = next((item for item in db["users"] if item["id"] == parts[2]), None)
+                if not target:
+                    authored_posts = [post for post in db["posts"] if post.get("authorId") == parts[2]]
+                    if not authored_posts:
+                        return self.send_json(404, {"error": "用户不存在"})
+                    target = {
+                        "id": parts[2],
+                        "name": authored_posts[0].get("author", "岛民"),
+                        "bio": "这是示例内容作者。",
+                        "mbti": "",
+                        "education": "",
+                        "city": "",
+                        "industry": "",
+                        "publicTags": False,
+                        "isAdmin": False,
+                        "verificationStatus": "unverified",
+                    }
+                return self.send_json(200, {"profile": public_profile(db, target)})
 
             if self.command == "POST" and path == "/api/login":
                 body = self.read_body()
@@ -209,6 +290,9 @@ class Handler(SimpleHTTPRequestHandler):
                     "city": "",
                     "industry": "",
                     "publicTags": True,
+                    "isAdmin": False,
+                    "verificationStatus": "unverified",
+                    "verificationProof": "",
                     "createdAt": now_ms(),
                 }
                 token = secrets.token_hex(24)
@@ -220,6 +304,14 @@ class Handler(SimpleHTTPRequestHandler):
             if not user:
                 return self.send_json(401, {"error": "请先登录"})
 
+            if self.command == "POST" and path == "/api/admin/unlock":
+                body = self.read_body()
+                if clean_text(body.get("key"), 80) != ADMIN_KEY:
+                    return self.send_json(403, {"error": "管理员口令不正确"})
+                user["isAdmin"] = True
+                write_db(db)
+                return self.send_json(200, {"user": public_user(user)})
+
             if self.command == "PUT" and path == "/api/profile":
                 body = self.read_body()
                 user["name"] = clean_text(body.get("name"), 18) or user["name"]
@@ -229,6 +321,31 @@ class Handler(SimpleHTTPRequestHandler):
                 user["city"] = clean_text(body.get("city"), 16)
                 user["industry"] = clean_text(body.get("industry"), 16)
                 user["publicTags"] = bool(body.get("publicTags"))
+                for post in db["posts"]:
+                    if post.get("authorId") == user["id"]:
+                        post["author"] = user["name"]
+                write_db(db)
+                return self.send_json(200, {"user": public_user(user)})
+
+            if self.command == "POST" and path == "/api/verification":
+                body = self.read_body()
+                proof = clean_text(body.get("proof"), 220)
+                if not user.get("education"):
+                    return self.send_json(400, {"error": "请先填写学历"})
+                if not proof:
+                    return self.send_json(400, {"error": "请填写认证说明"})
+                user["verificationStatus"] = "pending"
+                user["verificationProof"] = proof
+                db["verificationRequests"] = [item for item in db["verificationRequests"] if item.get("userId") != user["id"]]
+                db["verificationRequests"].insert(0, {
+                    "id": make_id(),
+                    "userId": user["id"],
+                    "name": user["name"],
+                    "education": user.get("education", ""),
+                    "proof": proof,
+                    "status": "待审核",
+                    "createdAt": now_ms(),
+                })
                 write_db(db)
                 return self.send_json(200, {"user": public_user(user)})
 
@@ -240,7 +357,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not title or not post_body:
                     return self.send_json(400, {"error": "标题和正文不能为空"})
                 db["posts"].insert(0, {
-                    "id": now_ms(),
+                    "id": make_id(),
                     "topic": topic,
                     "title": title,
                     "body": post_body,
@@ -255,7 +372,6 @@ class Handler(SimpleHTTPRequestHandler):
                 write_db(db)
                 return self.send_json(200, {"ok": True})
 
-            parts = path.strip("/").split("/")
             if len(parts) == 4 and parts[:2] == ["api", "posts"] and parts[3] == "like" and self.command == "POST":
                 post = next((item for item in db["posts"] if str(item["id"]) == parts[2]), None)
                 if not post:
@@ -272,7 +388,33 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json(404, {"error": "帖子不存在"})
                 if not reply_body:
                     return self.send_json(400, {"error": "回复不能为空"})
-                post.setdefault("replies", []).insert(0, {"id": now_ms(), "author": user["name"], "body": reply_body, "createdAt": now_ms()})
+                post.setdefault("replies", []).insert(0, {"id": make_id(), "author": user["name"], "authorId": user["id"], "body": reply_body, "createdAt": now_ms()})
+                post["comments"] = len(post["replies"])
+                write_db(db)
+                return self.send_json(200, {"ok": True})
+
+            if len(parts) == 3 and parts[:2] == ["api", "posts"] and self.command == "DELETE":
+                post_index = next((index for index, item in enumerate(db["posts"]) if str(item["id"]) == parts[2]), None)
+                if post_index is None:
+                    return self.send_json(404, {"error": "帖子不存在"})
+                post = db["posts"][post_index]
+                if not can_manage_content(user, post.get("authorId")):
+                    return self.send_json(403, {"error": "只能删除自己的帖子"})
+                db["posts"].pop(post_index)
+                db["reports"] = [item for item in db["reports"] if str(item.get("postId")) != parts[2]]
+                write_db(db)
+                return self.send_json(200, {"ok": True})
+
+            if len(parts) == 5 and parts[:2] == ["api", "posts"] and parts[3] == "replies" and self.command == "DELETE":
+                post = next((item for item in db["posts"] if str(item["id"]) == parts[2]), None)
+                if not post:
+                    return self.send_json(404, {"error": "帖子不存在"})
+                reply = next((item for item in post.get("replies", []) if str(item["id"]) == parts[4]), None)
+                if not reply:
+                    return self.send_json(404, {"error": "回复不存在"})
+                if not (can_manage_content(user, reply.get("authorId")) or can_manage_content(user, post.get("authorId"))):
+                    return self.send_json(403, {"error": "只能删除自己的回复"})
+                post["replies"] = [item for item in post.get("replies", []) if str(item["id"]) != parts[4]]
                 post["comments"] = len(post["replies"])
                 write_db(db)
                 return self.send_json(200, {"ok": True})
@@ -281,16 +423,35 @@ class Handler(SimpleHTTPRequestHandler):
                 post = next((item for item in db["posts"] if str(item["id"]) == parts[2]), None)
                 if not post:
                     return self.send_json(404, {"error": "帖子不存在"})
-                db["reports"].insert(0, {"id": now_ms(), "postId": post["id"], "title": post["title"], "reason": f"用户 {user['name']} 举报：需要管理员复核", "status": "待处理", "createdAt": now_ms()})
+                db["reports"].insert(0, {"id": make_id(), "postId": post["id"], "title": post["title"], "reason": f"用户 {user['name']} 举报：需要管理员复核", "status": "待处理", "createdAt": now_ms()})
                 write_db(db)
                 return self.send_json(200, {"ok": True})
 
             if len(parts) == 3 and parts[:2] == ["api", "reports"] and self.command == "PATCH":
+                if not user.get("isAdmin"):
+                    return self.send_json(403, {"error": "需要管理员权限"})
                 body = self.read_body()
                 report = next((item for item in db["reports"] if str(item["id"]) == parts[2]), None)
                 if not report:
                     return self.send_json(404, {"error": "举报不存在"})
                 report["status"] = "已封禁" if body.get("action") == "ban" else "已删除"
+                write_db(db)
+                return self.send_json(200, {"ok": True})
+
+            if len(parts) == 3 and parts[:2] == ["api", "verifications"] and self.command == "PATCH":
+                if not user.get("isAdmin"):
+                    return self.send_json(403, {"error": "需要管理员权限"})
+                body = self.read_body()
+                target = next((item for item in db["users"] if item["id"] == parts[2]), None)
+                request = next((item for item in db["verificationRequests"] if item.get("userId") == parts[2]), None)
+                if not target or not request:
+                    return self.send_json(404, {"error": "认证申请不存在"})
+                if body.get("action") == "approve":
+                    target["verificationStatus"] = "verified"
+                    request["status"] = "已通过"
+                else:
+                    target["verificationStatus"] = "rejected"
+                    request["status"] = "已拒绝"
                 write_db(db)
                 return self.send_json(200, {"ok": True})
 
@@ -315,6 +476,7 @@ if __name__ == "__main__":
         print("")
         print("No Wi-Fi/LAN address found. Make sure your computer is connected to Wi-Fi.")
     print("")
+    print("Admin key for v0.2 MVP:", ADMIN_KEY)
     print("Keep this window open while testing on your phone.")
     print("Press Ctrl+C to stop.")
     server.serve_forever()

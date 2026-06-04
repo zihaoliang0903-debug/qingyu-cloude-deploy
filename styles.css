@@ -39,6 +39,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .app-shell {
   width: min(100%, 480px);
   min-height: 100vh;
@@ -180,6 +185,19 @@ h3 {
   gap: 8px;
 }
 
+.author-button {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+}
+
+.author-button > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+
 .avatar {
   display: grid;
   width: 34px;
@@ -220,6 +238,12 @@ h3 {
   color: #373748;
   background: #f0f1ff;
   border: 1px solid rgba(139, 92, 246, 0.12);
+}
+
+.chip.verified {
+  color: #05603a;
+  background: #d9fff1;
+  border-color: rgba(32, 201, 151, 0.28);
 }
 
 .topic-pill {
@@ -303,6 +327,24 @@ h3 {
 .danger-button {
   color: white;
   background: var(--danger);
+}
+
+.danger-link,
+.text-button {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.danger-link {
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.text-button {
+  color: #252535;
 }
 
 .icon-button {
@@ -594,6 +636,21 @@ h3 {
   padding: 24px 14px;
   text-align: center;
   color: var(--muted);
+}
+
+.refresh-bar {
+  position: sticky;
+  top: 78px;
+  z-index: 18;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #0b5d4b;
+  background: #d9fff1;
+  border: 1px solid rgba(32, 201, 151, 0.25);
+  text-align: center;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .notice-text {
