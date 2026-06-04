@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>轻屿论坛</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">年轻人的开放论坛</p>
+          <h1>轻屿</h1>
+        </div>
+        <button class="icon-button" id="adminButton" type="button" aria-label="管理中心">
+          <span aria-hidden="true">盾</span>
+        </button>
+      </header>
+
+      <main id="app" class="screen" aria-live="polite"></main>
+
+      <nav class="bottom-nav" aria-label="底部导航">
+        <button class="nav-item active" data-view="home" type="button">
+          <span aria-hidden="true">⌂</span>
+          首页
+        </button>
+        <button class="nav-item" data-view="topics" type="button">
+          <span aria-hidden="true">#</span>
+          话题
+        </button>
+        <button class="nav-item nav-create" data-view="compose" type="button">
+          <span aria-hidden="true">＋</span>
+          发帖
+        </button>
+        <button class="nav-item" data-view="notice" type="button">
+          <span aria-hidden="true">铃</span>
+          通知
+        </button>
+        <button class="nav-item" data-view="profile" type="button">
+          <span aria-hidden="true">我</span>
+          我的
+        </button>
+      </nav>
+    </div>
+
+    <section class="sheet hidden" id="detailSheet" aria-modal="true" role="dialog">
+      <div class="sheet-card">
+        <button class="close-button" id="closeDetail" type="button" aria-label="关闭">×</button>
+        <div id="postDetail"></div>
+      </div>
+    </section>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
